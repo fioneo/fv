@@ -8,11 +8,20 @@ import (
 	"strings"
 )
 
+type filterResetMsg struct{}
+
+func filterResetCmd() tea.Cmd {
+	return func() tea.Msg {
+		return filterResetMsg{}
+	}
+}
+
 type Header struct {
 	inputField textinput.Model
 	CurrDir    string
 	Selected   int
 	FilesCount int
+	Styles     HeaderStyles
 }
 
 func NewHeader() Header {
@@ -21,6 +30,7 @@ func NewHeader() Header {
 		CurrDir:    "/",
 		Selected:   0,
 		FilesCount: 0,
+		Styles:     DefaultHeaderStyles(),
 	}
 }
 func DefaultInputField() textinput.Model {
@@ -30,6 +40,16 @@ func DefaultInputField() textinput.Model {
 	ti.CharLimit = 30
 	ti.SetWidth(20)
 	return ti
+}
+
+type filterMsg struct {
+	filter string
+}
+
+func filterCmd(filter string) tea.Cmd {
+	return func() tea.Msg {
+		return filterMsg{filter: filter}
+	}
 }
 
 type headerMsg struct {
@@ -62,9 +82,9 @@ type HeaderStyles struct {
 
 func DefaultHeaderStyles() HeaderStyles {
 	return HeaderStyles{
-		CurrDir:    lipgloss.NewStyle().Foreground(lipgloss.Color("247")),
-		Selected:   lipgloss.NewStyle().Foreground(lipgloss.Color("#A96AF0")),
-		FilesCount: lipgloss.NewStyle().Foreground(lipgloss.Color("36")),
+		CurrDir:    lipgloss.NewStyle(),
+		Selected:   lipgloss.NewStyle().Foreground(lipgloss.Color("#BFB09F")),
+		FilesCount: lipgloss.NewStyle().Foreground(lipgloss.Color("#BFA09F")),
 	}
 }
 
@@ -74,6 +94,8 @@ func (h Header) Init() tea.Cmd {
 
 func (h Header) Update(msg tea.Msg) (Header, tea.Cmd) {
 	switch msg := msg.(type) {
+	case filterResetMsg:
+		h.inputField.SetValue("")
 	case headerMsg:
 		h.CurrDir = msg.dir
 		h.Selected = msg.selected
@@ -84,19 +106,25 @@ func (h Header) Update(msg tea.Msg) (Header, tea.Cmd) {
 			break
 		}
 		h.inputField.Blur()
+	case tea.KeyPressMsg:
+		switch msg.String() {
+		case "enter":
+			return h, tea.Batch(inputModeCmd(false), filterCmd(h.inputField.Value()))
+		}
 	}
-
 	var cmd tea.Cmd
 	h.inputField, cmd = h.inputField.Update(msg)
 	return h, cmd
 }
 func (h Header) View() string {
 	var s strings.Builder
-	selected := h.Selected
+	curr := h.Selected
 	if h.FilesCount > 0 {
-		selected++
+		curr++
 	}
-	fmt.Fprintf(&s, "  %s  %s %d / %d ", h.CurrDir, h.inputField.View(), selected, h.FilesCount)
+	selected := fmt.Sprintf("%d", curr)
+	filescount := fmt.Sprintf("%d", h.FilesCount)
+	fmt.Fprintf(&s, "  %s  %s %s / %s", h.Styles.CurrDir.Render(h.CurrDir), h.inputField.View(), h.Styles.Selected.Render(selected), h.Styles.FilesCount.Render(filescount))
 
 	return s.String()
 }

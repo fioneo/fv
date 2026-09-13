@@ -20,6 +20,11 @@ func (a App) Init() tea.Cmd {
 
 func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case filterMsg:
+		if !a.inputMode {
+			break
+		}
+		a.inputMode = false
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c", "ctrl+q":
