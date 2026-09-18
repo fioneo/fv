@@ -19,24 +19,32 @@ func (a App) Init() tea.Cmd {
 }
 
 func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
 	switch msg := msg.(type) {
+	case filterMsg:
+		if a.inputMode {
+			a.inputMode = false
+			var filepickerCmd tea.Cmd
+			a.filepicker, filepickerCmd = a.filepicker.Update(msg)
+			return a, tea.Batch(inputModeCmd(false), filepickerCmd)
+		}
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c", "ctrl+q":
 			a.quitting = true
 			return a, tea.Quit
+
 		case "ctrl+f":
-			if a.inputMode {
-				break
-			}
-			a.inputMode = true
-			return a, inputModeCmd(a.inputMode)
-		case "esc":
 			if !a.inputMode {
-				break
+				a.inputMode = true
+				return a, inputModeCmd(true)
 			}
-			a.inputMode = false
-			return a, inputModeCmd(a.inputMode)
+
+		case "esc":
+			if a.inputMode {
+				a.inputMode = false
+				return a, inputModeCmd(false)
+			}
 		}
 	}
 	if a.inputMode {
@@ -44,15 +52,17 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.header, headerCmd = a.header.Update(msg)
 		return a, headerCmd
 	}
-	var filepickerCmd tea.Cmd
-	a.filepicker, filepickerCmd = a.filepicker.Update(msg)
-
-	var statusbarCmd tea.Cmd
-	a.statusbar, statusbarCmd = a.statusbar.Update(msg)
-
 	var headerCmd tea.Cmd
 	a.header, headerCmd = a.header.Update(msg)
-	return a, tea.Batch(filepickerCmd, statusbarCmd, headerCmd)
+	cmds = append(cmds, headerCmd)
+	var filepickerCmd tea.Cmd
+	a.filepicker, filepickerCmd = a.filepicker.Update(msg)
+	cmds = append(cmds, filepickerCmd)
+	var statusbarCmd tea.Cmd
+	a.statusbar, statusbarCmd = a.statusbar.Update(msg)
+	cmds = append(cmds, statusbarCmd)
+
+	return a, tea.Batch(cmds...)
 }
 
 func (a App) View() tea.View {
