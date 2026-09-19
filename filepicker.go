@@ -8,6 +8,7 @@ import (
 	"cmp"
 	"fmt"
 	"github.com/dustin/go-humanize"
+	"github.com/fvbommel/sortorder"
 	"golang.org/x/sys/unix"
 	"io"
 	"os"
@@ -49,7 +50,6 @@ func (c SortConfig) String() string {
 	order := "⬆"
 	if c.order == sortDesc {
 		order = "⬇"
-
 	}
 	switch c.field {
 	case sortByName:
@@ -69,29 +69,29 @@ func (o sortOrder) Reverse() sortOrder {
 	return sortAsc
 }
 
-type SafeCache struct {
+type Cache[K comparable, V any] struct {
 	mu    sync.RWMutex
-	items map[uint32]string
+	items map[K]V
 }
 
-func NewSafeCache() *SafeCache {
-	return &SafeCache{items: make(map[uint32]string)}
+func NewCache[K comparable, V any]() *Cache[K, V] {
+	return &Cache[K, V]{items: make(map[K]V)}
 }
-
-func (c *SafeCache) Get(id uint32) (string, bool) {
+func (c *Cache[K, V]) Get(key K) (V, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	val, ok := c.items[id]
+	val, ok := c.items[key]
 	return val, ok
 }
 
-func (c *SafeCache) Set(id uint32, val string) {
+func (c *Cache[K, V]) Set(key K, val V) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.items[id] = val
+	c.items[key] = val
 }
 
 type FilePicker struct {
+	Config         Config
 	CurrentDir     string
 	selectedIdx    int
 	ShowHidden     bool
@@ -100,31 +100,32 @@ type FilePicker struct {
 	viewportHeight int
 	maxIdx         int
 	minIdx         int
-	userCache      *SafeCache
-	groupCache     *SafeCache
-	filesCache     map[string]filesCacheEntry
+	userCache      *Cache[uint32, string]
+	groupCache     *Cache[uint32, string]
+	filesCache     *Cache[string, filesCacheEntry]
 	filter         string
 	sortBy         SortConfig
+	less           bool
 	KeyMap         KeyMap
 	Styles         Styles
 	extended       bool
 }
 
-func NewFilePicker() FilePicker {
+func NewFilePicker(cfg Config) FilePicker {
 	return FilePicker{
-		CurrentDir:     "/",
+		CurrentDir:     cfg.Settings.CurrentDir,
 		selectedIdx:    0,
-		ShowHidden:     false,
-		Cursor:         "> ",
-		viewportHeight: 20,
+		ShowHidden:     cfg.Settings.ShowHidden,
+		Cursor:         cfg.Settings.Cursor,
+		viewportHeight: 0,
 		maxIdx:         0,
 		minIdx:         0,
-		userCache:      NewSafeCache(),
-		groupCache:     NewSafeCache(),
-		filesCache:     map[string]filesCacheEntry{},
+		userCache:      NewCache[uint32, string](),
+		groupCache:     NewCache[uint32, string](),
+		filesCache:     NewCache[string, filesCacheEntry](),
 		sortBy:         SortConfig{},
-		KeyMap:         DefaultKeyMap(),
-		Styles:         DefaultStyles(),
+		KeyMap:         cfg.KeyMap.FilePickerKeyMap(),
+		Styles:         cfg.Styles.FilePickerStyles(),
 	}
 }
 
@@ -139,10 +140,10 @@ func execCmd(path string) tea.Cmd {
 }
 
 type statusMsg struct {
-	status string
+	status any
 }
 
-func statusCmd(status string) tea.Cmd {
+func statusCmd(status any) tea.Cmd {
 	return func() tea.Msg {
 		return statusMsg{status: status}
 	}
@@ -150,7 +151,7 @@ func statusCmd(status string) tea.Cmd {
 
 type filePickerStateMsg struct {
 	currentDir  string
-	files       []File
+	filesCount  int
 	selectedIdx int
 	sortBy      SortConfig
 }
@@ -159,7 +160,7 @@ func filePickerStateCmd(state FilePicker) tea.Cmd {
 	return func() tea.Msg {
 		return filePickerStateMsg{
 			currentDir:  state.CurrentDir,
-			files:       state.files,
+			filesCount:  len(state.files),
 			selectedIdx: state.selectedIdx,
 			sortBy:      state.sortBy,
 		}
@@ -174,7 +175,6 @@ type readCurrentDirMsg struct {
 type filesCacheEntry struct {
 	files     []File
 	updatedAt time.Time
-	status    string
 }
 
 type File struct {
@@ -193,6 +193,7 @@ type KeyMap struct {
 	Extended        key.Binding
 	ToggleSortField key.Binding
 	ToggleSortOrder key.Binding
+	Less            key.Binding
 }
 
 type Styles struct {
@@ -201,6 +202,7 @@ type Styles struct {
 	Symlink          lipgloss.Style
 	LinkDest         lipgloss.Style
 	BrokenSymlink    lipgloss.Style
+	FileNotExist     lipgloss.Style
 	Pipe             lipgloss.Style
 	Socket           lipgloss.Style
 	IrregularFile    lipgloss.Style
@@ -215,54 +217,30 @@ type Styles struct {
 	FileSize         lipgloss.Style
 	EmptyDirectory   lipgloss.Style
 	Nlink            lipgloss.Style
-	Date             lipgloss.Style
-}
-
-func DefaultStyles() Styles {
-	return Styles{
-		DisabledCursor:   lipgloss.NewStyle().Foreground(lipgloss.Color("247")),
-		Cursor:           lipgloss.NewStyle().Foreground(lipgloss.Color("#D5CFEB")),
-		Symlink:          lipgloss.NewStyle().Foreground(lipgloss.Color("36")),
-		LinkDest:         lipgloss.NewStyle().Foreground(lipgloss.Color("#D5CFEB")),
-		BrokenSymlink:    lipgloss.NewStyle().Foreground(lipgloss.Color("#9E190D")),
-		Pipe:             lipgloss.NewStyle().Foreground(lipgloss.Color("#E0BB7A")),
-		Socket:           lipgloss.NewStyle().Foreground(lipgloss.Color("#F3C2EA")),
-		IrregularFile:    lipgloss.NewStyle().Foreground(lipgloss.Color("#D1448B")),
-		Device:           lipgloss.NewStyle().Foreground(lipgloss.Color("#DEFB3D")),
-		Directory:        lipgloss.NewStyle().Foreground(lipgloss.Color("#2472B5")),
-		File:             lipgloss.NewStyle(),
-		Ownership:        lipgloss.NewStyle().Foreground(lipgloss.Color("#B5B1FB")),
-		DisabledFile:     lipgloss.NewStyle().Foreground(lipgloss.Color("243")),
-		DisabledSelected: lipgloss.NewStyle().Foreground(lipgloss.Color("247")),
-		Permission:       lipgloss.NewStyle().Foreground(lipgloss.Color("#B1D2FB")),
-		Selected:         lipgloss.NewStyle().Background(lipgloss.Color("#240641")).Bold(true),
-		FileSize:         lipgloss.NewStyle().Foreground(lipgloss.Color("#C2D2F9")),
-		EmptyDirectory:   lipgloss.NewStyle().Foreground(lipgloss.Color("240")).SetString("No Files Found.\n").MarginLeft(marginLeft),
-		Nlink:            lipgloss.NewStyle().Foreground(lipgloss.Color("#CFE5EB")),
-		Date:             lipgloss.NewStyle().Foreground(lipgloss.Color("#CFE5EB")),
-	}
-}
-
-func DefaultKeyMap() KeyMap {
-	return KeyMap{
-		GoToTop:         key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "first")),
-		GoToLast:        key.NewBinding(key.WithKeys("G"), key.WithHelp("G", "last")),
-		Down:            key.NewBinding(key.WithKeys("j", "down", "ctrl+n"), key.WithHelp("j", "down")),
-		Up:              key.NewBinding(key.WithKeys("k", "up", "ctrl+p"), key.WithHelp("k", "up")),
-		Back:            key.NewBinding(key.WithKeys("h", "backspace", "left"), key.WithHelp("h", "back")),
-		Open:            key.NewBinding(key.WithKeys("l", "right"), key.WithHelp("l", "open")),
-		ToggleHidden:    key.NewBinding(key.WithKeys("i", "ctrl+i"), key.WithHelp("i", "toggle hidden files")),
-		ToggleSortField: key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "toggle sort field")),
-		ToggleSortOrder: key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "toggle sort order")),
-		Extended:        key.NewBinding(key.WithKeys("e", "ctrl+e"), key.WithHelp("e", "extended look on selected file")),
-	}
+	Mtime            lipgloss.Style
 }
 
 func (fp *FilePicker) SetHeight(h int) {
-	fp.viewportHeight = h
-	if fp.maxIdx > fp.viewportHeight-1 {
-		fp.maxIdx = fp.bottomIdx(fp.minIdx)
+	fp.viewportHeight = max(h, 1)
+
+	if len(fp.files) == 0 {
+		fp.minIdx = 0
+		fp.maxIdx = 0
+		return
 	}
+
+	fp.selectedIdx = min(max(fp.selectedIdx, 0), len(fp.files)-1)
+
+	if fp.selectedIdx < fp.minIdx {
+		fp.minIdx = fp.selectedIdx
+	}
+	if fp.selectedIdx > fp.bottomIdx(fp.minIdx) {
+		fp.minIdx = fp.selectedIdx - fp.viewportHeight + 1
+	}
+
+	maxMinIdx := max(len(fp.files)-fp.viewportHeight, 0)
+	fp.minIdx = min(max(fp.minIdx, 0), maxMinIdx)
+	fp.maxIdx = min(fp.bottomIdx(fp.minIdx), len(fp.files)-1)
 }
 
 func (fp FilePicker) Height() int {
@@ -279,7 +257,7 @@ func (fp FilePicker) bottomIdx(topIdx int) int {
 func (fp FilePicker) readCurrentDir() tea.Cmd {
 	return func() tea.Msg {
 		dir := fp.CurrentDir
-		if cachedFiles, ok := fp.filesCache[dir]; ok && time.Since(cachedFiles.updatedAt) < cacheTTL {
+		if cachedFiles, ok := fp.filesCache.Get(dir); ok && time.Since(cachedFiles.updatedAt) < cacheTTL {
 			return readCurrentDirMsg{dir: dir, entry: cachedFiles}
 		}
 
@@ -289,11 +267,9 @@ func (fp FilePicker) readCurrentDir() tea.Cmd {
 		}
 
 		var files []File
-		skipped := 0
 		for _, f := range dirEntries {
 			var stat unix.Stat_t
 			path := filepath.Join(dir, f.Name())
-			skipped++
 			if err := unix.Lstat(path, &stat); err != nil {
 				continue
 			}
@@ -301,7 +277,6 @@ func (fp FilePicker) readCurrentDir() tea.Cmd {
 			if err != nil {
 				continue
 			}
-			skipped--
 			files = append(files, File{
 				stat: stat,
 				info: info,
@@ -311,9 +286,8 @@ func (fp FilePicker) readCurrentDir() tea.Cmd {
 		filesEntry := filesCacheEntry{
 			files:     files,
 			updatedAt: time.Now(),
-			status:    fmt.Sprintf("! skipped %d files", skipped),
 		}
-
+		fp.filesCache.Set(dir, filesEntry)
 		return readCurrentDirMsg{dir: dir, entry: filesEntry}
 	}
 }
@@ -341,9 +315,22 @@ func (fp *FilePicker) sortFiles() {
 	slices.SortFunc(fp.files, func(a File, b File) int {
 		var res int
 
+		if a.info.IsDir() != b.info.IsDir() {
+			if a.info.IsDir() {
+				return -1
+			}
+			return 1
+
+		}
 		switch fp.sortBy.field {
 		case sortByName:
-			res = strings.Compare(strings.ToLower(a.info.Name()), strings.ToLower(b.info.Name()))
+			if sortorder.NaturalLess(strings.ToLower(a.info.Name()), strings.ToLower(b.info.Name())) {
+				res = -1
+			} else if sortorder.NaturalLess(strings.ToLower(b.info.Name()), strings.ToLower(a.info.Name())) {
+				res = 1
+			} else {
+				res = 0
+			}
 		case sortBySize:
 			res = cmp.Compare(a.info.Size(), b.info.Size())
 		case sortByDate:
@@ -351,7 +338,13 @@ func (fp *FilePicker) sortFiles() {
 		}
 
 		if res == 0 {
-			res = strings.Compare(strings.ToLower(a.info.Name()), strings.ToLower(b.info.Name()))
+			if sortorder.NaturalLess(strings.ToLower(a.info.Name()), strings.ToLower(b.info.Name())) {
+				res = -1
+			} else if sortorder.NaturalLess(strings.ToLower(b.info.Name()), strings.ToLower(a.info.Name())) {
+				res = 1
+			} else {
+				res = 0
+			}
 		}
 
 		if fp.sortBy.order == sortDesc {
@@ -384,17 +377,20 @@ func (fp FilePicker) Update(msg tea.Msg) (FilePicker, tea.Cmd) {
 	case execMsg:
 		c := exec.Command("micro", msg.path)
 		return fp, tea.ExecProcess(c, func(err error) tea.Msg {
-			return statusMsg{status: "program exit"}
+			return statusCmd(err)
 		})
 	case readCurrentDirMsg:
-		fp.filesCache[msg.dir] = msg.entry
 		if msg.dir == fp.CurrentDir {
 			fp.files = fp.filterFiles(msg.entry.files, fp.filter)
 			fp.sortFiles()
+
 			fp.minIdx = 0
-			fp.maxIdx = max(fp.maxIdx, fp.bottomIdx(fp.minIdx))
+			fp.maxIdx = min(
+				fp.bottomIdx(fp.minIdx),
+				len(fp.files)-1,
+			)
 		}
-		return fp, tea.Batch(filePickerStateCmd(fp), statusCmd(msg.entry.status))
+		return fp, tea.Batch(filePickerStateCmd(fp), statusCmd(""))
 	case tea.KeyPressMsg:
 		switch {
 		case key.Matches(msg, fp.KeyMap.GoToTop):
@@ -403,41 +399,49 @@ func (fp FilePicker) Update(msg tea.Msg) (FilePicker, tea.Cmd) {
 				fp.minIdx = 0
 				fp.maxIdx = fp.bottomIdx(0)
 			}
-			return fp, filePickerStateCmd(fp)
+			return fp, tea.Batch(filePickerStateCmd(fp), statusCmd(""))
 		case key.Matches(msg, fp.KeyMap.GoToLast):
 			if len(fp.files) > 0 {
 				fp.selectedIdx = len(fp.files) - 1
 				fp.minIdx = max(len(fp.files)-fp.Height(), 0)
 				fp.maxIdx = len(fp.files) - 1
 			}
-			return fp, filePickerStateCmd(fp)
+			return fp, tea.Batch(filePickerStateCmd(fp), statusCmd(""))
 		case key.Matches(msg, fp.KeyMap.Down):
 			if len(fp.files) == 0 {
 				break
 			}
-			fp.selectedIdx++
-			if fp.selectedIdx >= len(fp.files) {
-				fp.selectedIdx = len(fp.files) - 1
+
+			if fp.selectedIdx < len(fp.files)-1 {
+				fp.selectedIdx++
 			}
+
 			if fp.selectedIdx > fp.maxIdx {
-				fp.maxIdx++
 				fp.minIdx++
+				fp.maxIdx++
 			}
-			return fp, filePickerStateCmd(fp)
+
+			fp.maxIdx = min(fp.maxIdx, len(fp.files)-1)
+
+			return fp, tea.Batch(filePickerStateCmd(fp), statusCmd(""))
 		case key.Matches(msg, fp.KeyMap.Up):
 			if len(fp.files) == 0 {
 				break
 			}
-			fp.selectedIdx--
-			if fp.selectedIdx < 0 {
-				fp.selectedIdx = 0
+
+			if fp.selectedIdx > 0 {
+				fp.selectedIdx--
 			}
 
 			if fp.selectedIdx < fp.minIdx {
 				fp.minIdx--
 				fp.maxIdx--
 			}
-			return fp, filePickerStateCmd(fp)
+
+			fp.minIdx = max(fp.minIdx, 0)
+			fp.maxIdx = min(fp.maxIdx, len(fp.files)-1)
+
+			return fp, tea.Batch(filePickerStateCmd(fp), statusCmd(""))
 		case key.Matches(msg, fp.KeyMap.Back):
 			parentDir := filepath.Dir(fp.CurrentDir)
 			if fp.CurrentDir == parentDir {
@@ -445,7 +449,7 @@ func (fp FilePicker) Update(msg tea.Msg) (FilePicker, tea.Cmd) {
 			}
 			fp.Reset()
 			fp.CurrentDir = parentDir
-			return fp, tea.Batch(fp.readCurrentDir(), filterResetCmd())
+			return fp, tea.Batch(fp.readCurrentDir(), filterResetCmd(), statusCmd(""))
 		case key.Matches(msg, fp.KeyMap.Open):
 			if len(fp.files) == 0 {
 				break
@@ -454,21 +458,20 @@ func (fp FilePicker) Update(msg tea.Msg) (FilePicker, tea.Cmd) {
 
 			isSymlink := file.info.Mode()&os.ModeSymlink != 0
 			isDir := file.info.IsDir()
-
+			path := filepath.Join(fp.CurrentDir, file.info.Name())
 			if isSymlink {
 				symlinkPath, err := filepath.EvalSymlinks(filepath.Join(fp.CurrentDir, file.info.Name()))
 				if err != nil {
-					return fp, statusCmd(err.Error())
+					return fp, statusCmd(err)
 				}
 
 				stat, err := os.Stat(symlinkPath)
 				if err != nil {
-					return fp, statusCmd(err.Error())
+					return fp, statusCmd(err)
 				}
+				path = symlinkPath
 				isDir = stat.IsDir()
 			}
-
-			path := filepath.Join(fp.CurrentDir, file.info.Name())
 
 			if !isDir {
 				ok, err := canOpen(path)
@@ -476,25 +479,25 @@ func (fp FilePicker) Update(msg tea.Msg) (FilePicker, tea.Cmd) {
 					return fp, statusCmd(err.Error())
 				}
 				if !ok {
-					return fp, statusCmd("Cannot open file: invalid format")
+					return fp, statusCmd(fmt.Errorf("Cannot open file: invalid format"))
 				}
 				return fp, execCmd(path)
 			}
 
 			if _, err := os.ReadDir(path); err != nil {
-				return fp, statusCmd(err.Error())
+				return fp, statusCmd(err)
 			}
 
 			fp.CurrentDir = filepath.Join(fp.CurrentDir, file.info.Name())
 			fp.Reset()
-			return fp, tea.Batch(fp.readCurrentDir(), filterResetCmd())
+			return fp, tea.Batch(fp.readCurrentDir(), filterResetCmd(), statusCmd(""))
 		case key.Matches(msg, fp.KeyMap.ToggleHidden):
 			fp.ShowHidden = !fp.ShowHidden
 			fp.Reset()
-			if cached, ok := fp.filesCache[fp.CurrentDir]; ok {
+			if cached, ok := fp.filesCache.Get(fp.CurrentDir); ok {
 				fp.files = fp.filterFiles(cached.files, fp.filter)
 			}
-			return fp, filePickerStateCmd(fp)
+			return fp, tea.Batch(filePickerStateCmd(fp), statusCmd(""))
 		case key.Matches(msg, fp.KeyMap.ToggleSortField):
 			switch fp.sortBy.field {
 			case sortByName:
@@ -505,13 +508,16 @@ func (fp FilePicker) Update(msg tea.Msg) (FilePicker, tea.Cmd) {
 				fp.sortBy.field = sortByName
 			}
 			fp.sortFiles()
-			return fp, filePickerStateCmd(fp)
+			return fp, tea.Batch(filePickerStateCmd(fp), statusCmd(""))
 		case key.Matches(msg, fp.KeyMap.ToggleSortOrder):
 			fp.sortBy.order = fp.sortBy.order.Reverse()
 			fp.sortFiles()
-			return fp, filePickerStateCmd(fp)
+			return fp, tea.Batch(filePickerStateCmd(fp), statusCmd(""))
 		case key.Matches(msg, fp.KeyMap.Extended):
 			fp.extended = !fp.extended
+			return fp, nil
+		case key.Matches(msg, fp.KeyMap.Less):
+			fp.less = !fp.less
 			return fp, nil
 		}
 	}
@@ -528,29 +534,33 @@ func (fp FilePicker) View() string {
 	maxPermLen := 0
 	maxNlinkLen := 0
 
-	for i := fp.minIdx; i <= fp.maxIdx && i < len(fp.files); i++ {
-		f := fp.files[i]
+	if !fp.less {
 
-		ownerName := fp.LookupUser(f.stat.Uid)
-		groupName := fp.LookupGroup(f.stat.Gid)
+		for i := fp.minIdx; i <= fp.maxIdx && i < len(fp.files); i++ {
+			f := fp.files[i]
 
-		ownerStrLen := utf8.RuneCountInString(ownerName + " " + groupName)
-		if ownerStrLen > maxOwnerLen {
-			maxOwnerLen = ownerStrLen
-		}
-		nlinkLen := utf8.RuneCountInString(strconv.FormatUint(f.stat.Nlink, 10))
-		if nlinkLen > maxNlinkLen {
-			maxNlinkLen = nlinkLen
+			ownerName := fp.LookupUser(f.stat.Uid)
+			groupName := fp.LookupGroup(f.stat.Gid)
+
+			ownerStrLen := utf8.RuneCountInString(ownerName + " " + groupName)
+			if ownerStrLen > maxOwnerLen {
+				maxOwnerLen = ownerStrLen
+			}
+			nlinkLen := utf8.RuneCountInString(strconv.FormatUint(f.stat.Nlink, 10))
+			if nlinkLen > maxNlinkLen {
+				maxNlinkLen = nlinkLen
+			}
+
+			sizeStr := strings.Replace(humanize.Bytes(uint64(f.info.Size())), " ", "", 1)
+			if len(sizeStr) > maxSizeLen {
+				maxSizeLen = len(sizeStr)
+			}
+			permStrLen := utf8.RuneCountInString(f.info.Mode().String())
+			if permStrLen > maxPermLen {
+				maxPermLen = permStrLen
+			}
 		}
 
-		sizeStr := strings.Replace(humanize.Bytes(uint64(f.info.Size())), " ", "", 1)
-		if len(sizeStr) > maxSizeLen {
-			maxSizeLen = len(sizeStr)
-		}
-		permStrLen := utf8.RuneCountInString(f.info.Mode().String())
-		if permStrLen > maxPermLen {
-			maxPermLen = permStrLen
-		}
 	}
 
 	var s strings.Builder
@@ -558,16 +568,9 @@ func (fp FilePicker) View() string {
 		if i < fp.minIdx || i > fp.maxIdx {
 			continue
 		}
+
 		info := f.info
 		stat := f.stat
-
-		name := info.Name()
-		size := strings.Replace(humanize.Bytes(uint64(info.Size())), " ", "", 1)
-
-		ownerName := fp.LookupUser(stat.Uid)
-		groupName := fp.LookupGroup(stat.Gid)
-
-		name = fp.RenderByFileType(stat, name)
 
 		cursor := fp.Styles.Cursor
 		if fp.selectedIdx == i {
@@ -576,40 +579,64 @@ func (fp FilePicker) View() string {
 			s.WriteString(cursor.Render("  "))
 		}
 
-		rawOwnership := ownerName + " " + groupName
-		rawPerm := info.Mode().String()
-		rawNLink := strconv.FormatUint(f.stat.Nlink, 10)
+		name := info.Name()
+		symName := name
+		symlinkPath, symErr := os.Readlink(filepath.Join(fp.CurrentDir, name))
+		if symErr == nil {
+			symName += " -> " + symlinkPath
+		}
 
-		date := fp.Styles.Date.Render(
-			time.Unix(f.stat.Mtim.Sec, f.stat.Mtim.Nsec).Format("Jan _2 15:04"),
+		size := strings.Replace(humanize.Bytes(uint64(info.Size())), " ", "", 1)
+
+		ownerName := fp.LookupUser(stat.Uid)
+		groupName := fp.LookupGroup(stat.Gid)
+
+		rawSize := fmt.Sprintf("%*s", maxSizeLen, size)
+		rawOwnership := fmt.Sprintf("%-*s", maxOwnerLen, ownerName+" "+groupName)
+		rawPerm := fmt.Sprintf("%-*s", maxPermLen, info.Mode().String())
+		rawNlink := fmt.Sprintf("%*s", maxNlinkLen, strconv.FormatUint(f.stat.Nlink, 10))
+		mtime := time.Unix(f.stat.Mtim.Sec, f.stat.Mtim.Nsec).Format("Jan _2 15:04")
+
+		mtimeRendered := fp.Styles.Mtime.Render(
+			mtime,
 		)
 		ownershipRendered := fp.Styles.Ownership.Render(
-			fmt.Sprintf("%-*s", maxOwnerLen, rawOwnership),
+			rawOwnership,
 		)
 		sizeRendered := fp.Styles.FileSize.Render(
-			fmt.Sprintf("%*s", maxSizeLen, size),
+			rawSize,
 		)
 		permRendered := fp.Styles.Permission.Render(
-			fmt.Sprintf("%-*s", maxPermLen, rawPerm),
+			rawPerm,
 		)
 		nlinkRendered := fp.Styles.Nlink.Render(
-			fmt.Sprintf("%*s", maxNlinkLen, rawNLink),
+			rawNlink,
 		)
+		nameRendered := fp.RenderByFileType(stat, name)
 
-		WriteRow(
-			&s,
-			permRendered,
-			nlinkRendered,
-			ownershipRendered,
-			sizeRendered,
-			date,
-			name,
-		)
-		s.WriteRune('\n')
+		if fp.selectedIdx == i {
+			row := fmt.Sprintf("%s %s %s %s %s %s", rawPerm, rawNlink, rawOwnership, rawSize, mtime, symName)
+			s.WriteString(fp.Styles.Selected.Render(row))
+		} else if fp.less {
+			row := fp.RenderByFileType(stat, name)
+			if fp.selectedIdx == i {
+				row = fp.Styles.Selected.Render(symName)
+			}
+			s.WriteString(row)
+		} else {
+			WriteRow(
+				&s,
+				permRendered,
+				nlinkRendered,
+				ownershipRendered,
+				sizeRendered,
+				mtimeRendered,
+				nameRendered,
+			)
+		}
 
-		if fp.extended && fp.selectedIdx == i {
+		if i != len(fp.files)-1 && i < fp.maxIdx {
 			s.WriteRune('\n')
-			fmt.Fprintf(&s, "  Size: %s/%d\n  Uid: ( %d / %s ) Gid: ( %d / %s )\n\n", size, info.Size(), stat.Uid, ownerName, stat.Gid, groupName)
 		}
 	}
 
@@ -641,7 +668,7 @@ func canOpen(path string) (bool, error) {
 	return utf8.Valid(data), nil
 }
 
-func (fp FilePicker) LookupUser(uid uint32) string {
+func (fp *FilePicker) LookupUser(uid uint32) string {
 	if u, ok := fp.userCache.Get(uid); ok {
 		return u
 	}
@@ -653,7 +680,7 @@ func (fp FilePicker) LookupUser(uid uint32) string {
 	return usr
 }
 
-func (fp FilePicker) LookupGroup(gid uint32) string {
+func (fp *FilePicker) LookupGroup(gid uint32) string {
 	if g, ok := fp.groupCache.Get(gid); ok {
 		return g
 	}
@@ -676,12 +703,15 @@ func (fp FilePicker) RenderByFileType(stat unix.Stat_t, name string) string {
 	case unix.S_IFDIR:
 		return fp.Styles.Directory.Render(name)
 	case unix.S_IFLNK:
-		symlinkPath, err := os.Readlink(filepath.Join(fp.CurrentDir, name))
-		if err != nil {
+		symlinkPath, symErr := os.Readlink(filepath.Join(fp.CurrentDir, name))
+		if symErr != nil {
 			return fp.Styles.BrokenSymlink.Render(name)
 		}
-		target := " -> " + fp.Styles.LinkDest.Render(symlinkPath)
-		return fp.Styles.Symlink.Render(name) + target
+		arrow := " -> "
+		if err := unix.Lstat(filepath.Join(fp.CurrentDir, symlinkPath), &unix.Stat_t{}); err != nil {
+			return fp.Styles.BrokenSymlink.Render(name) + arrow + fp.Styles.FileNotExist.Render(symlinkPath)
+		}
+		return fp.Styles.Symlink.Render(name) + arrow + fp.Styles.LinkDest.Render(symlinkPath)
 	case unix.S_IFIFO:
 		return fp.Styles.Pipe.Render(name)
 	case unix.S_IFSOCK:
