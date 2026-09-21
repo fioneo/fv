@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -108,7 +109,6 @@ type FilePicker struct {
 	less           bool
 	KeyMap         KeyMap
 	Styles         Styles
-	extended       bool
 }
 
 func NewFilePicker(cfg Config) FilePicker {
@@ -193,6 +193,7 @@ type KeyMap struct {
 	Extended        key.Binding
 	ToggleSortField key.Binding
 	ToggleSortOrder key.Binding
+	SortByName      key.Binding
 	Less            key.Binding
 }
 
@@ -300,9 +301,11 @@ func (fp FilePicker) filterFiles(files []File, filter string) []File {
 		if !fp.ShowHidden && isHidden(f.info.Name()) {
 			continue
 		}
-
-		if trim != "" && !strings.Contains(strings.ToLower(f.info.Name()), trim) {
-			continue
+		if trim != "" {
+			matched, err := regexp.MatchString(trim, f.info.Name())
+			if !matched || err != nil {
+				continue
+			}
 		}
 
 		result = append(result, f)
@@ -513,9 +516,6 @@ func (fp FilePicker) Update(msg tea.Msg) (FilePicker, tea.Cmd) {
 			fp.sortBy.order = fp.sortBy.order.Reverse()
 			fp.sortFiles()
 			return fp, tea.Batch(filePickerStateCmd(fp), statusCmd(""))
-		case key.Matches(msg, fp.KeyMap.Extended):
-			fp.extended = !fp.extended
-			return fp, nil
 		case key.Matches(msg, fp.KeyMap.Less):
 			fp.less = !fp.less
 			return fp, nil
