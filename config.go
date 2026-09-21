@@ -14,10 +14,9 @@ type Config struct {
 }
 
 type SettingsConfig struct {
-	CurrentDir     string
-	ShowHidden     bool
-	Cursor         string `json:"cursor"`
-	ViewportHeight int    `json:"viewport_height"`
+	CurrentDir string
+	ShowHidden bool
+	Cursor     string `json:"cursor"`
 }
 
 type ColorConfig struct {
@@ -82,7 +81,6 @@ type KeyMapConfig struct {
 	ToggleHidden    KeyBindingConfig `json:"toggle_hidden"`
 	ToggleSortField KeyBindingConfig `json:"toggle_sort_field"`
 	ToggleSortOrder KeyBindingConfig `json:"toggle_sort_order"`
-	Extended        KeyBindingConfig `json:"extended"`
 	Less            KeyBindingConfig `json:"less"`
 }
 
@@ -155,7 +153,6 @@ func (k KeyMapConfig) FilePickerKeyMap() KeyMap {
 		ToggleHidden:    k.ToggleHidden.ToBinding(),
 		ToggleSortField: k.ToggleSortField.ToBinding(),
 		ToggleSortOrder: k.ToggleSortOrder.ToBinding(),
-		Extended:        k.Extended.ToBinding(),
 		Less:            k.Less.ToBinding(),
 	}
 }

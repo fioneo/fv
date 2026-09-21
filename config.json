@@ -1,0 +1,47 @@
+{
+  "settings": {
+    "cursor": "> "
+  },
+  "styles": {
+    "disabled_cursor": "#4C566A",
+    "cursor": "#ECEFF4",
+    "symlink": "#88C0D0",
+    "link_dest": "#B48EAD",
+    "broken_symlink": "#D08770",
+    "file_not_exist": "#BF616A",
+    "pipe": "#EBCB8B",
+    "socket": "#B48EAD",
+    "irregular_file": "#D08770",
+    "device": "#EBCB8B",
+    "directory": "#81A1C1",
+    "file": "#E5E9F0",
+    "ownership": "#D8DEE9",
+    "disabled_file": "#4C566A",
+    "permission": "#88C0D0",
+    "selected": "#88C0D0",
+    "disabled_selected": "#4C566A",
+    "file_size": "#A3BE8C",
+    "empty_directory": "#4C566A",
+    "nlink": "#8FBCBB",
+    "mtime": "#D8DEE9",
+    "header_selected": "#88C0D0",
+    "header_files_count": "#B48EAD",
+    "header_sort_by": "#A3BE8C",
+    "error_msg": "#BF616A"
+  },
+  "keymap": {
+    "quit": { "keys": ["ctrl+q", "ctrl+c"], "help": "quit" },
+    "filter_mode": { "keys": ["f","ctrl+f"], "help": "filter mode" },
+    "filter_exit": { "keys": ["esc"], "help": "exit filter mode" },
+    "go_to_top": { "keys": ["g"], "help": "first" },
+    "go_to_last": { "keys": ["G"], "help": "last" },
+    "down": { "keys": ["j", "down", "ctrl+n"], "help": "down" },
+    "up": { "keys": ["k", "up", "ctrl+p"], "help": "up" },
+    "back": { "keys": ["h", "backspace", "left"], "help": "back" },
+    "open": { "keys": ["l", "right"], "help": "open" },
+    "toggle_hidden": { "keys": ["i", "ctrl+i"], "help": "toggle hidden files" },
+    "toggle_sort_field": { "keys": ["s"], "help": "toggle sort field" },
+    "toggle_sort_order": { "keys": ["S"], "help": "toggle sort order" },
+    "less": { "keys": ["x"], "help": "show only files name" }
+  }
+}
