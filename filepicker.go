@@ -104,6 +104,7 @@ type FilePicker struct {
 	userCache      *Cache[uint32, string]
 	groupCache     *Cache[uint32, string]
 	filesCache     *Cache[string, filesCacheEntry]
+	execTool       string
 	filter         string
 	sortBy         SortConfig
 	less           bool
@@ -123,6 +124,7 @@ func NewFilePicker(cfg Config) FilePicker {
 		userCache:      NewCache[uint32, string](),
 		groupCache:     NewCache[uint32, string](),
 		filesCache:     NewCache[string, filesCacheEntry](),
+		execTool:       cfg.Settings.ExecTool,
 		sortBy:         SortConfig{},
 		KeyMap:         cfg.KeyMap.FilePickerKeyMap(),
 		Styles:         cfg.Styles.FilePickerStyles(),
@@ -378,7 +380,7 @@ func (fp FilePicker) Update(msg tea.Msg) (FilePicker, tea.Cmd) {
 		fp.filter = msg.filter
 		return fp, fp.readCurrentDir()
 	case execMsg:
-		c := exec.Command("micro", msg.path)
+		c := exec.Command(fp.execTool, msg.path)
 		return fp, tea.ExecProcess(c, func(err error) tea.Msg {
 			return statusCmd(err)
 		})

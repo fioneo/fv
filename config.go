@@ -12,11 +12,11 @@ type Config struct {
 	Styles   ColorConfig    `json:"styles"`
 	KeyMap   KeyMapConfig   `json:"keymap"`
 }
-
 type SettingsConfig struct {
 	CurrentDir string
-	ShowHidden bool
+	ShowHidden bool   `json:"show_hidden"`
 	Cursor     string `json:"cursor"`
+	ExecTool   string `json:"exec_tool"`
 }
 
 type ColorConfig struct {

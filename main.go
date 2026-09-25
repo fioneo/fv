@@ -8,7 +8,7 @@ import (
 	"os"
 )
 
-const usage = "pick [ directory ]"
+const usage = "fv [ directory ]"
 
 type App struct {
 	filepicker FilePicker

@@ -1,6 +1,7 @@
 {
   "settings": {
-    "cursor": "> "
+    "cursor": "> ",
+    "exec_tool": "vi"
   },
   "styles": {
     "disabled_cursor": "#4C566A",
