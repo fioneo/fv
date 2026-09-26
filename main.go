@@ -113,7 +113,7 @@ func (a App) View() tea.View {
 }
 
 func main() {
-	cfg, err := LoadConfig("/home/fioneo/.config/fv/config.json")
+	cfg, err := LoadConfig("~/.config/fv/config.json")
 	if err != nil {
 		fmt.Printf("ERROR loading config: %s\n", err.Error())
 		os.Exit(1)
